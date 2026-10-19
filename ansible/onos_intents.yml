@@ -114,6 +114,8 @@
     - name: Resumen
       ansible.builtin.debug:
         msg: >-
-          {{ check.json.intents | selectattr('appId', 'equalto', onos_app)
-             | map(attribute='key') | zip(check.json.intents
-             | selectattr('appId', 'equalto', onos_app) | map(attribute='state')) | list }}
+          {%- set r = [] -%}
+          {%- for i in check.json.intents if i.appId == onos_app -%}
+          {%-   set _ = r.append(i.key ~ ': ' ~ i.state ~ '  ' ~ (i.resources | join(' <-> '))) -%}
+          {%- endfor -%}
+          {{ r }}

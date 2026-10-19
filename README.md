@@ -62,7 +62,7 @@ primera publicación, el paquete debe hacerse público en
 ## Ansible en el controller
 
 ```bash
-sudo apt install -y ansible-core git
+sudo apt install -y --no-install-recommends ansible-core git
 git clone https://github.com/NohaFeynman/TEL354_LAB5_2026_2.git
 cd TEL354_LAB5_2026_2/ansible
 
@@ -70,6 +70,7 @@ cd TEL354_LAB5_2026_2/ansible
 ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
 for i in 11 12 13; do ssh-copy-id -o StrictHostKeyChecking=accept-new ubuntu@192.168.0.$i; done
 ansible switches -m ping
+# Cada ansible-playbook pide "BECOME password:" (contraseña de sudo de los switches)
 
 ansible-playbook ovs_reset.yml
 ansible-playbook ovs_direct.yml                 # enfoque imperativo
