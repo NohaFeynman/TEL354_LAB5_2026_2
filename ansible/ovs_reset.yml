@@ -1,0 +1,26 @@
+# Deja cada OVS sin controlador y sin reglas, en modo secure y con OpenFlow 1.3.
+# Uso: ansible-playbook ovs_reset.yml
+- name: Reiniciar el estado de los switches
+  hosts: switches
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Eliminar el controlador
+      ansible.builtin.command: ovs-vsctl del-controller {{ inventory_hostname }}
+
+    - name: Fijar fail-mode secure y OpenFlow 1.3
+      ansible.builtin.command: >-
+        ovs-vsctl set-fail-mode {{ inventory_hostname }} secure --
+        set bridge {{ inventory_hostname }} protocols=OpenFlow13
+
+    - name: Borrar todas las reglas
+      ansible.builtin.command: ovs-ofctl -O OpenFlow13 del-flows {{ inventory_hostname }}
+
+    - name: Contar las reglas restantes
+      ansible.builtin.shell: ovs-ofctl -O OpenFlow13 dump-flows {{ inventory_hostname }} --no-stats | grep -c . || true
+      register: n
+      changed_when: false
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: controlador eliminado, {{ n.stdout }} reglas"

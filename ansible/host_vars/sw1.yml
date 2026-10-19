@@ -1,0 +1,4 @@
+# Interfaz de sw1 hacia cada switch de acceso
+ports:
+  sw2: ens5
+  sw3: ens6

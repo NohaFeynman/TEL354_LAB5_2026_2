@@ -1,0 +1,68 @@
+# Enfoque imperativo: traduce la intención (group_vars/all.yml) a reglas
+# OpenFlow y las instala por SSH en cada OVS, sin controlador.
+#
+#   ansible-playbook ovs_direct.yml                  aplica la configuración
+#   ansible-playbook ovs_direct.yml --check --diff   solo detecta diferencias
+- name: Conectividad mediante reglas instaladas directamente en cada OVS
+  hosts: switches
+  become: true
+  gather_facts: false
+  vars:
+    flows_file: /home/ubuntu/lab5_flows.txt
+  tasks:
+    - name: Verificar que el switch no tenga controlador
+      ansible.builtin.command: ovs-vsctl get-controller {{ inventory_hostname }}
+      register: ctrl
+      changed_when: false
+      check_mode: false
+      failed_when: ctrl.stdout | length > 0
+
+    - name: Leer el número de puerto OpenFlow de cada interfaz
+      ansible.builtin.command: ovs-vsctl get interface {{ item }} ofport
+      loop: "{{ ports.values() | list }}"
+      register: ofports
+      changed_when: false
+      check_mode: false
+
+    - name: Construir la tabla interfaz -> puerto OpenFlow
+      ansible.builtin.set_fact:
+        ofport: "{{ dict(ofports.results | map(attribute='item') | zip(ofports.results | map(attribute='stdout') | map('int'))) }}"
+
+    - name: Mostrar la tabla de puertos
+      ansible.builtin.debug:
+        var: ofport
+
+    - name: Generar el archivo de reglas deseadas
+      ansible.builtin.template:
+        src: templates/flows.j2
+        dest: "{{ flows_file }}"
+        mode: "0644"
+      check_mode: false   # el archivo solo describe el estado deseado
+
+    - name: Comparar reglas instaladas con las deseadas
+      ansible.builtin.command: >-
+        ovs-ofctl -O OpenFlow13 diff-flows {{ inventory_hostname }} {{ flows_file }}
+      register: drift
+      check_mode: false
+      changed_when: drift.stdout | length > 0
+      failed_when: drift.rc not in [0, 2]
+
+    - name: Mostrar las diferencias encontradas
+      ansible.builtin.debug:
+        msg: "{{ drift.stdout_lines if drift.stdout else 'sin diferencias' }}"
+
+    - name: Reemplazar las reglas del switch por las deseadas
+      ansible.builtin.command: >-
+        ovs-ofctl -O OpenFlow13 replace-flows {{ inventory_hostname }} {{ flows_file }}
+      when: drift.stdout | length > 0
+
+    - name: Reglas instaladas
+      ansible.builtin.command: >-
+        ovs-ofctl -O OpenFlow13 dump-flows {{ inventory_hostname }} --no-stats
+      register: flows
+      changed_when: false
+      check_mode: false
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg: "{{ flows.stdout_lines }}"

@@ -1,0 +1,119 @@
+# Enfoque declarativo: traduce la misma intención (group_vars/all.yml) a
+# HostToHostIntents en ONOS. ONOS calcula el camino, instala las reglas y las
+# mantiene. El playbook deja en ONOS exactamente los intents de la lista:
+# crea los que faltan y elimina los que sobran (solo los de su appId).
+#
+# Uso (en el controller): ansible-playbook onos_intents.yml
+- name: Conectividad mediante intents de ONOS
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    api: "{{ onos_url }}/onos/v1"
+  module_defaults:
+    ansible.builtin.uri:
+      url_username: "{{ onos_user }}"
+      url_password: "{{ onos_password }}"
+      force_basic_auth: true
+      headers:
+        Accept: application/json
+  tasks:
+    - name: Registrar el appId del laboratorio en ONOS
+      ansible.builtin.uri:
+        url: "{{ api }}/applications/{{ onos_app }}/register"
+        method: POST
+        status_code: [200]
+
+    - name: Leer los hosts que conoce ONOS
+      ansible.builtin.uri:
+        url: "{{ api }}/hosts"
+      register: onos_hosts
+
+    - name: Construir la tabla IP -> id de host (MAC/VLAN)
+      ansible.builtin.set_fact:
+        host_id: >-
+          {%- set t = {} -%}
+          {%- for h in onos_hosts.json.hosts -%}
+          {%-   for ip in h.ipAddresses -%}
+          {%-     set _ = t.update({ip: h.id}) -%}
+          {%-   endfor -%}
+          {%- endfor -%}
+          {{ t }}
+
+    - name: Verificar que ONOS conozca todos los hosts de la intención
+      ansible.builtin.assert:
+        that: lab_hosts[item].ip in host_id
+        fail_msg: >-
+          ONOS no conoce a {{ item }} ({{ lab_hosts[item].ip }}).
+          Ejecute un ping desde {{ item }} para que ONOS lo descubra y repita.
+        quiet: true
+      loop: "{{ connectivity | flatten | unique }}"
+
+    - name: Calcular los intents deseados
+      ansible.builtin.set_fact:
+        desired: >-
+          {%- set d = [] -%}
+          {%- for p in connectivity -%}
+          {%-   set a = host_id[lab_hosts[p[0]].ip] -%}
+          {%-   set b = host_id[lab_hosts[p[1]].ip] -%}
+          {%-   set _ = d.append({'name': p[0] ~ '-' ~ p[1], 'one': a, 'two': b,
+                                  'sig': [a, b] | sort | join(',')}) -%}
+          {%- endfor -%}
+          {{ d }}
+
+    - name: Leer los intents actuales
+      ansible.builtin.uri:
+        url: "{{ api }}/intents"
+      register: onos_intents
+
+    - name: Calcular qué intents crear y cuáles eliminar
+      ansible.builtin.set_fact:
+        current: >-
+          {%- set c = [] -%}
+          {%- for i in onos_intents.json.intents if i.appId == onos_app -%}
+          {%-   set _ = c.append({'key': i.key, 'sig': i.resources | sort | join(',')}) -%}
+          {%- endfor -%}
+          {{ c }}
+
+    - name: Crear los intents que faltan
+      ansible.builtin.uri:
+        url: "{{ api }}/intents"
+        method: POST
+        body_format: json
+        body:
+          type: HostToHostIntent
+          appId: "{{ onos_app }}"
+          one: "{{ item.one }}"
+          two: "{{ item.two }}"
+        status_code: [201]
+      loop: "{{ desired | rejectattr('sig', 'in', current | map(attribute='sig') | list) | list }}"
+      loop_control:
+        label: "{{ item.name }}"
+      changed_when: true
+
+    - name: Eliminar los intents que ya no están en la intención
+      ansible.builtin.uri:
+        url: "{{ api }}/intents/{{ onos_app }}/{{ item.key }}"
+        method: DELETE
+        status_code: [204]
+      loop: "{{ current | rejectattr('sig', 'in', desired | map(attribute='sig') | list) | list }}"
+      loop_control:
+        label: "{{ item.key }}"
+      changed_when: true
+
+    - name: Esperar a que todos los intents del laboratorio estén INSTALLED
+      ansible.builtin.uri:
+        url: "{{ api }}/intents"
+      register: check
+      until: >-
+        check.json.intents | selectattr('appId', 'equalto', onos_app)
+        | rejectattr('state', 'in', ['INSTALLED', 'WITHDRAWN']) | list | length == 0
+      retries: 10
+      delay: 2
+
+    - name: Resumen
+      ansible.builtin.debug:
+        msg: >-
+          {{ check.json.intents | selectattr('appId', 'equalto', onos_app)
+             | map(attribute='key') | zip(check.json.intents
+             | selectattr('appId', 'equalto', onos_app) | map(attribute='state')) | list }}
