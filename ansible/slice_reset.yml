@@ -1,0 +1,25 @@
+# Devuelve el slice al estado inicial de la experiencia de laboratorio:
+# elimina el contenedor de ONOS y tshark en el controller (la imagen se
+# conserva) y deja los switches sin controlador ni reglas.
+# Uso: ansible-playbook slice_reset.yml
+- name: Limpiar el controller
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Eliminar el contenedor de ONOS
+      ansible.builtin.command: docker rm -f onos
+      register: rm
+      changed_when: rm.rc == 0
+      failed_when: false
+
+    - name: Desinstalar tshark
+      ansible.builtin.shell: >-
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y tshark wireshark-common
+        && apt-get autoremove -y && apt-get clean
+      register: purge
+      changed_when: "'Removing' in purge.stdout"
+
+- name: Reiniciar los switches
+  ansible.builtin.import_playbook: ovs_reset.yml

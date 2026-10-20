@@ -1,5 +1,0 @@
-# uplink: interfaz hacia sw1; el resto, interfaz hacia cada host
-ports:
-  uplink: ens4
-  h1: ens5
-  h2: ens6

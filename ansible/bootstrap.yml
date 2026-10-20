@@ -1,6 +1,18 @@
-# Conecta cada OVS a ONOS (red OOB) y espera a que la conexión quede activa.
-# Uso: ansible-playbook ovs_connect.yml
-- name: Conectar los switches al controlador
+# Bootstrap (day-0) de la red: deja cada OVS en un estado inicial conocido
+# y conectado a ONOS. Ansible no instala flows: de eso se encarga ONOS.
+# Uso (en el controller, con ONOS ya levantado): ansible-playbook bootstrap.yml
+- name: Verificar que ONOS esté escuchando OpenFlow
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Esperar el puerto 6653 en el controller
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 6653
+        timeout: 180
+
+- name: Bootstrap de los switches OVS
   hosts: switches
   become: true
   gather_facts: false
@@ -9,6 +21,9 @@
       ansible.builtin.command: >-
         ovs-vsctl set-fail-mode {{ inventory_hostname }} secure --
         set bridge {{ inventory_hostname }} protocols=OpenFlow13
+
+    - name: Borrar las reglas que hubiera en el switch
+      ansible.builtin.command: ovs-ofctl -O OpenFlow13 del-flows {{ inventory_hostname }}
 
     - name: Configurar el controlador
       ansible.builtin.command: ovs-vsctl set-controller {{ inventory_hostname }} {{ controller }}
